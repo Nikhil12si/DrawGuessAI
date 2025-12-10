@@ -1,0 +1,69 @@
+import pandas as pd
+import re
+import nltk
+from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report
+
+# getting the stop words list
+nltk.download('stopwords')
+stop_words = set(stopwords.words('english'))
+
+print("Starting Part 1...")
+
+# reading the csv files into pandas
+train = pd.read_csv('train_sent_emo.csv')
+test = pd.read_csv('test_sent_emo.csv')
+
+# making a function to clean up the text
+def clean(text):
+    # checking if it is actually text
+    if type(text) != str:
+        return ""
+    
+    # getting rid of weird characters and numbers
+    text = re.sub(r'[^a-zA-Z\s]', '', text)
+    # make everything lowercase
+    text = text.lower()
+    
+    # splitting into words to remove stop words
+    words = text.split()
+    final_words = []
+    for w in words:
+        if w not in stop_words:
+            final_words.append(w)
+            
+    # putting it back together
+    return " ".join(final_words)
+
+print("Cleaning text data...")
+# cleaning the utterance column
+train['cleaned'] = train['Utterance'].apply(clean)
+test['cleaned'] = test['Utterance'].apply(clean)
+
+# making the words into numbers so model understands
+vectorizer = TfidfVectorizer(max_features=5000)
+X_train = vectorizer.fit_transform(train['cleaned'])
+X_test = vectorizer.transform(test['cleaned'])
+
+# the target is the Emotion column
+y_train = train['Emotion']
+y_test = test['Emotion']
+
+# setting up the model
+print("Training model...")
+model = LogisticRegression(max_iter=1000)
+
+# fitting the model on training data
+model.fit(X_train, y_train)
+
+# making predictions on the test data
+preds = model.predict(X_test)
+
+# seeing how good it did
+acc = accuracy_score(y_test, preds)
+print("Accuracy:", acc)
+
+print("\nClassification Report:")
+print(classification_report(y_test, preds))
