@@ -1,0 +1,137 @@
+rnnimport torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.utils.data as data
+import numpy as np
+import os
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Running on: {device}")
+
+print("\n--- PART 1: Data Preparation (10% Subset) ---")
+
+class QuickDrawDataset(data.Dataset):
+    def __init__(self, data_dir, classes):
+        self.data = []
+        self.labels = []
+        
+        for idx, class_name in enumerate(classes):
+            file_path = os.path.join(data_dir, f"{class_name}.npy")
+            
+            if not os.path.exists(file_path):
+                print(f"Warning: {file_path} not found. Skipping.")
+                continue
+            
+            try:
+                full_data = np.load(file_path)
+                
+                total_count = len(full_data)
+                subset_size = int(total_count * 0.1) 
+                
+                print(f"Class '{class_name}': Original {total_count} -> Loading {subset_size} samples")
+                
+               
+                subset_data = full_data[:subset_size]
+                
+                # Normalize pixel values (0-255) to (0-1)
+                subset_data = subset_data.astype('float32') / 255.0
+                
+                self.data.append(subset_data)
+                self.labels.extend([idx] * subset_size)
+            except Exception as e:
+                print(f"Error loading {class_name}: {e}")
+
+        if len(self.data) > 0:
+            self.data = np.concatenate(self.data, axis=0)
+            self.labels = np.array(self.labels)
+          
+            self.data = torch.from_numpy(self.data).view(-1, 28, 28)
+            self.labels = torch.from_numpy(self.labels).long()
+        else:
+            print("No data loaded. Creating dummy data for testing.")
+            self.data = torch.randn(100, 28, 28)
+            self.labels = torch.zeros(100).long()
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.labels[idx]
+
+classes = ['cat', 'fish', 'ladder'] 
+
+dataset = QuickDrawDataset(data_dir='./data', classes=classes)
+
+train_size = int(0.8 * len(dataset))
+test_size = len(dataset) - train_size
+train_dataset, test_dataset = data.random_split(dataset, [train_size, test_size])
+
+trainloader = data.DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=0)
+testloader = data.DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=0)
+
+print("\n--- PART 2: RNN Model ---")
+
+class RecurrentModel(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, num_classes):
+        super(RecurrentModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        
+
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+
+        self.fc = nn.Linear(hidden_size, num_classes)
+
+    def forward(self, x):
+
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+
+        out, _ = self.lstm(x, (h0, c0))
+
+        out = out[:, -1, :]
+        out = self.fc(out)
+        return out
+
+# Model Hyperparameters
+INPUT_SIZE = 28    # 28 columns per row
+HIDDEN_SIZE = 128
+NUM_LAYERS = 2
+NUM_CLASSES = len(classes)
+
+model = RecurrentModel(INPUT_SIZE, HIDDEN_SIZE, NUM_LAYERS, NUM_CLASSES).to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+print("\n--- PART 3: Training and Evaluation ---")
+
+def train_and_evaluate(model, optimizer, train_loader, test_loader, epochs=5, name="Model"):
+    model.train()
+    for epoch in range(epochs):
+        running_loss = 0.0
+        for inputs, labels in train_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            
+            running_loss += loss.item()
+        print(f"[{name}] Epoch {epoch+1} finished. Avg Loss: {running_loss / len(train_loader):.3f}")
+
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    
+    print(f"[{name}] Accuracy on test set: {100 * correct / total:.2f}%")
+
+train_and_evaluate(model, optimizer, trainloader, testloader, epochs=5, name="QuickDraw_RNN")
